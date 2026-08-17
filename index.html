@@ -291,6 +291,14 @@ const TOY_MIN = FLOOR_MIN + 4;       // 장난감을 놓을 수 있는 앞뒤 �
 const TOY_MAX = FLOOR_MAX;
 // 장난감은 저마다 자기 바닥선을 갖는다 (앞뒤 어디에나 놓을 수 있게)
 const toyGY = o => clamp((o && o.gy !== undefined) ? o.gy : TOY_GY, TOY_MIN, TOY_MAX);
+/* 손을 놓았을 때 어느 앞뒤 자리에 떨어질지 정한다.
+   - 바닥 근처에서 놓으면 그 자리
+   - 위에서 던지면 잡고 있던 자리를 기준으로, 아래로 던진 만큼 앞쪽으로 나아간다
+   - 위로 띄우면 원래 자리로 되돌아온다 */
+function throwLanding(y, vy, curGY, min, max){
+  const base = y >= min ? clamp(y, min, max) : curGY;
+  return clamp(base + Math.max(0, vy)*0.20, min, max);
+}
 const MAX_FURN = 42;                 // 배치 가능한 최대 가구 수
 const HOLD_DY = 104;                 // 고양이를 잡았을 때 손에서 발까지의 거리
 const SAVE_KEY = "cathome.save.v1";
@@ -1223,6 +1231,8 @@ function releaseCat(){
   const sp = Math.hypot(cat.vx, cat.vy);
   cat.heldT = 0;
   cat.pin = null;
+  // 놓은 자리와 던진 방향으로 착지할 앞뒤 자리를 정한다
+  cat.gy = throwLanding(cat.y, cat.vy, cat.gy, CAT_Y-10, FLOOR_MAX-8);
   if(cat.y >= cat.gy - 8 && sp < 130){        // 바닥에 살며시 내려놓기
     cat.y = cat.gy; cat.vx = 0; cat.vy = 0; cat.rot = 0;
     squash(0.14); setState("land", 0.4);
@@ -1503,7 +1513,8 @@ function updateCat(dt){
     }else{
       cat.x = cat.holdX; cat.y = cat.holdY + cat.holdDY;
     }
-    if(cat.y >= CAT_Y-10) cat.gy = clamp(cat.y, CAT_Y-10, FLOOR_MAX-8);
+    // 바닥 가까이에서 천천히 끌면 앞뒤 자리가 따라온다 (들어 올리는 중엔 유지)
+    if(cat.y >= CAT_Y-10 && Math.hypot(cat.vx, cat.vy) < 300) cat.gy = clamp(cat.y, CAT_Y-10, FLOOR_MAX-8);
     if(Math.abs(cat.holdX - prevHX) > 0.6) cat.dir = cat.holdX > prevHX ? 1 : -1;
 
     // 빠르게 휘두르면 몸이 쭉 늘어난다
@@ -6024,8 +6035,8 @@ stage.addEventListener("pointermove", e=>{
     const o = drag.toy;
     o.x = clamp(p.x - drag.dx, X_MIN-8, X_MAX+8);
     o.y = clamp(p.y - drag.dy, 60, TOY_MAX);
-    // 바닥 높이까지 내리면 그 자리(앞뒤 깊이)에 놓인다
-    if(o.y > TOY_MIN) o.gy = clamp(o.y, TOY_MIN, TOY_MAX);
+    // 바닥 가까이에서 천천히 끌면 그 자리로 옮겨진다 (휙 들어 올릴 때는 유지)
+    if(o.y > TOY_MIN && Math.hypot(o.vx||0, o.vy||0) < 300) o.gy = clamp(o.y, TOY_MIN, TOY_MAX);
     return;
   }
   if(!editMode || !sel) return;
@@ -6057,8 +6068,10 @@ function endDrag(){
     return;
   }
   if(drag && drag.toy){
-    drag.toy.held = false;
-    alertCatToToy(drag.toy);
+    const o = drag.toy;
+    o.gy = throwLanding(o.y, o.vy || 0, toyGY(o), TOY_MIN, TOY_MAX);
+    o.held = false;
+    alertCatToToy(o);
   }else if(sel && sel.type === "toy" && S.toys[sel.i]){
     S.toys[sel.i].held = false;
   }
