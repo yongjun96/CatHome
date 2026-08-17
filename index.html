@@ -286,7 +286,11 @@ const FLOOR_MAX = H - 14;
 const WALL_MIN  = 28, WALL_MAX = FLOOR_Y - 74;
 const X_MIN = 64, X_MAX = 900;       // 좌우 이동 범위
 const GRAVITY = 1500;                // 장난감에 걸리는 중력 (px/s^2)
-const TOY_GY  = CAT_Y + 8;           // 장난감이 굴러다니는 바닥선
+const TOY_GY  = CAT_Y + 8;           // 장난감의 기본 바닥선
+const TOY_MIN = FLOOR_MIN + 4;       // 장난감을 놓을 수 있는 앞뒤 범위
+const TOY_MAX = FLOOR_MAX;
+// 장난감은 저마다 자기 바닥선을 갖는다 (앞뒤 어디에나 놓을 수 있게)
+const toyGY = o => clamp((o && o.gy !== undefined) ? o.gy : TOY_GY, TOY_MIN, TOY_MAX);
 const MAX_FURN = 42;                 // 배치 가능한 최대 가구 수
 const HOLD_DY = 104;                 // 고양이를 잡았을 때 손에서 발까지의 거리
 const SAVE_KEY = "cathome.save.v1";
@@ -916,7 +920,7 @@ function defaultFurn(){
 }
 function defaultToys(){
   return [
-    { t:"ball", x:470, y:TOY_GY, vx:0, vy:0, rot:0 },
+    { t:"ball", x:470, y:TOY_GY, gy:TOY_GY, vx:0, vy:0, rot:0 },
   ];
 }
 function newSave(breedId, name){
@@ -950,7 +954,8 @@ function load(){
     if(!Array.isArray(d.toys)) d.toys = defaultToys();
     d.furn = d.furn.filter(f => FURN[f.t] && FURN[f.t].kind !== "toy");
     d.toys = d.toys.filter(o => FURN[o.t] && FURN[o.t].kind === "toy")
-                   .map(o => ({ t:o.t, x:o.x, y:o.y, vx:0, vy:0, rot:o.rot||0 }));
+                   .map(o => { const gy = clamp(o.gy === undefined ? TOY_GY : o.gy, TOY_MIN, TOY_MAX);
+                               return { t:o.t, x:o.x, y:Math.min(o.y, gy), gy:gy, vx:0, vy:0, rot:o.rot||0 }; });
     return d;
   }catch(e){ return null; }
 }
@@ -1736,13 +1741,13 @@ function updateCat(dt){
     case "chase": {
       const o = cat.targetToy;
       if(!o || o.held || S.toys.indexOf(o) < 0){ decideNext(); break; }
-      const dx = o.x - cat.x, dy = TOY_GY - cat.y;
+      const dx = o.x - cat.x, dy = toyGY(o) - cat.y;
       if(Math.abs(dx) < 34 && Math.abs(dy) < 26 && cat.spd < 180){
         cat.batDone = false; setState("bat", 0.5);
       }else{
         // 굴러가는 장난감을 앞질러 가로챈다 (조금 앞을 노린다)
         const lead = clamp((o.vx || 0)*0.28, -90, 90);
-        moveToward(dt, o.x + lead, TOY_GY, { top:205, acc:520, dec:640, brake:52 });
+        moveToward(dt, o.x + lead, toyGY(o), { top:205, acc:520, dec:640, brake:52 });
         if(cat.stateT > 8) decideNext();
       }
       break;
@@ -1806,8 +1811,9 @@ function updateToys(dt){
     o.rot = (o.rot || 0) + (o.rotV || 0)*dt;
 
     // 바닥 반사
-    if(o.y > TOY_GY){
-      o.y = TOY_GY;
+    const gy = toyGY(o);
+    if(o.y > gy){
+      o.y = gy;
       if(Math.abs(o.vy) > 60){
         if(o.vy > 140) sfxBounce();
         o.vy = -o.vy*0.5;
@@ -1823,7 +1829,7 @@ function updateToys(dt){
     for(const f of S.furn){
       const FD = FURN[f.t];
       if(FD.kind !== "floor" || FD.deco) continue;
-      if(Math.abs(f.y - TOY_GY) > 46) continue;
+      if(Math.abs(f.y - gy) > 46) continue;
       const b = furnBox(f);
       if(o.x + r < b.x || o.x - r > b.x + b.w) continue;
       if(o.y + r < b.y || o.y - r > b.y + b.h) continue;
@@ -1845,7 +1851,7 @@ function updateToys(dt){
       }
     }
     // 거의 멈추면 정지
-    if(o.y >= TOY_GY - 0.5 && Math.abs(o.vx) < 4){ o.vx = 0; o.rotV = (o.rotV || 0)*0.86; }
+    if(o.y >= gy - 0.5 && Math.abs(o.vx) < 4){ o.vx = 0; o.rotV = (o.rotV || 0)*0.86; }
   }
 }
 // 장난감을 던졌을 때 고양이의 관심을 끈다
@@ -3824,8 +3830,9 @@ function dFeatherRaw(x, y){
 /* --------- 물리 장난감 --------- */
 function drawToy(o){
   const r = FURN[o.t].r;
-  const air = Math.max(0, TOY_GY - o.y);                 // 공중에 뜬 높이
-  shadowEllipse(o.x, TOY_GY + 4, r*1.5, r*0.5, clamp(1 - air/130, 0.2, 1));
+  const gy = toyGY(o);
+  const air = Math.max(0, gy - o.y);                     // 공중에 뜬 높이
+  shadowEllipse(o.x, gy + 4, r*1.5, r*0.5, clamp(1 - air/130, 0.2, 1));
   ctx.save();
   ctx.translate(o.x, o.y - r);
   ctx.rotate(o.rot || 0);
@@ -5626,7 +5633,7 @@ function render(t){
     const D = FURN[f.t];
     if(D && D.kind === "floor" && !D.deco) list.push({ y:f.y, f:f });
   }
-  for(const o of S.toys) list.push({ y: o.held ? 9999 : TOY_GY + 1, o:o });
+  for(const o of S.toys) list.push({ y: o.held ? 9999 : toyGY(o) + 1, o:o });
   list.push({ y: catDepth(), c:true });
   list.sort((a,b)=> a.y - b.y);
   for(const it of list){
@@ -5846,7 +5853,7 @@ function addFurn(t){
   const D = FURN[t];
   if(D.kind === "toy"){
     if(S.toys.length >= 6){ toast("장난감은 6개까지만 놓을 수 있어요"); return; }
-    const o = { t:t, x:rand(360,600), y:180, vx:rand(-70,70), vy:0, rot:0 };
+    const o = { t:t, x:rand(360,600), y:180, gy:rand(TOY_MIN+24, TOY_MAX-16), vx:rand(-70,70), vy:0, rot:0 };
     S.toys.push(o);
     sel = { type:"toy", i:S.toys.length-1 };
     toast(`${D.name}을(를) 떨어뜨렸어요`);
@@ -6014,15 +6021,19 @@ stage.addEventListener("pointermove", e=>{
     return;
   }
   if(drag.toy){                                  // 장난감 끌기
-    drag.toy.x = clamp(p.x - drag.dx, X_MIN-8, X_MAX+8);
-    drag.toy.y = clamp(p.y - drag.dy, 60, TOY_GY);
+    const o = drag.toy;
+    o.x = clamp(p.x - drag.dx, X_MIN-8, X_MAX+8);
+    o.y = clamp(p.y - drag.dy, 60, TOY_MAX);
+    // 바닥 높이까지 내리면 그 자리(앞뒤 깊이)에 놓인다
+    if(o.y > TOY_MIN) o.gy = clamp(o.y, TOY_MIN, TOY_MAX);
     return;
   }
   if(!editMode || !sel) return;
-  if(sel.type === "toy"){
+  if(sel.type === "toy"){                        // 꾸미기 모드 - 바닥 어디에나 놓는다
     const o = S.toys[sel.i]; if(!o) return;
     o.x = clamp(p.x - drag.dx, X_MIN-8, X_MAX+8);
-    o.y = clamp(p.y - drag.dy, 60, TOY_GY);
+    o.gy = clamp(p.y - drag.dy, TOY_MIN, TOY_MAX);
+    o.y = o.gy; o.vx = 0; o.vy = 0;
     return;
   }
   const f = S.furn[sel.i]; if(!f) return;
