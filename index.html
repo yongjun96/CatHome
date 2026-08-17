@@ -906,31 +906,17 @@ function sfxClick(){
 /* ---------------------------- 세이브 / 로드 ---------------------------- */
 // 처음 시작할 때의 기본 인테리어
 function defaultFurn(){
-  // 넓어진 바닥을 앞뒤로 고루 쓰도록 배치한다
+  // 처음엔 꼭 필요한 것만. 나머지는 🛋️ 꾸미기에서 직접 채워 넣는 재미로 남겨 둔다
   return [
-    { t:"rug",       x:470, y:566 },
-    { t:"tower",     x:110, y:492 },
-    { t:"bowlF",     x:250, y:474 },
-    { t:"bowlW",     x:334, y:474 },
-    { t:"scratcher", x:424, y:482 },
-    { t:"bed",       x:660, y:486 },
-    { t:"litter",    x:862, y:478 },
-    { t:"box",       x:560, y:576 },
-    { t:"plant",     x:770, y:470 },
-    { t:"aquarium",  x:236, y:582 },
-    { t:"catnip",    x:760, y:576 },
-    { t:"cave",      x:900, y:566 },
-    { t:"frame",     x:300, y:112 },
-    { t:"shelf",     x:168, y:196 },
-    { t:"step",      x:262, y:250 },
-    { t:"clock",     x:470, y:104 },
+    { t:"bowlF",  x:262, y:478 },
+    { t:"bowlW",  x:346, y:478 },
+    { t:"bed",    x:600, y:494 },
+    { t:"litter", x:836, y:482 },
   ];
 }
 function defaultToys(){
   return [
-    { t:"ball",    x:470, y:TOY_GY, vx:0, vy:0, rot:0 },
-    { t:"mouse",   x:700, y:TOY_GY, vx:0, vy:0, rot:0 },
-    { t:"feather", x:360, y:TOY_GY, vx:0, vy:0, rot:0 },
+    { t:"ball", x:470, y:TOY_GY, vx:0, vy:0, rot:0 },
   ];
 }
 function newSave(breedId, name){
