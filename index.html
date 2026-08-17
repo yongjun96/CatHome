@@ -296,8 +296,11 @@ const toyGY = o => clamp((o && o.gy !== undefined) ? o.gy : TOY_GY, TOY_MIN, TOY
    - 위에서 던지면 잡고 있던 자리를 기준으로, 아래로 던진 만큼 앞쪽으로 나아간다
    - 위로 띄우면 원래 자리로 되돌아온다 */
 function throwLanding(y, vy, curGY, min, max){
-  const base = y >= min ? clamp(y, min, max) : curGY;
-  return clamp(base + Math.max(0, vy)*0.20, min, max);
+  // 바닥에 닿을 만큼 내려놓았고 힘도 없으면 그 자리에 그대로 놓인다
+  if(Math.abs(vy) < 200 && y >= curGY - 40) return clamp(y, min, max);
+  // 던졌을 때는 잡고 있던 자리를 기준으로, 세로로 던진 만큼 앞뒤로 날아간다
+  // (아래로 던지면 방 앞쪽, 위로 띄우면 방 뒤쪽. 들어 올린 높이는 영향을 주지 않는다)
+  return clamp(curGY + vy*0.11, min, max);
 }
 const MAX_FURN = 42;                 // 배치 가능한 최대 가구 수
 const HOLD_DY = 104;                 // 고양이를 잡았을 때 손에서 발까지의 거리
@@ -435,6 +438,9 @@ let lastTs = 0, elapsed = 0;
 let playMode = false;          // 낚싯대 모드
 const pointer = { x: W/2, y: 300, active:false };
 const pointerRaw = { x: W/2, y: 300 };   // 화면 그대로의 포인터 좌표(고양이 잡기용)
+/* 낚싯대 끝에 매달린 깃털. 손(포인터)을 한 박자 늦게 따라오고 관성으로 흔들린다.
+   고양이는 포인터가 아니라 이 깃털을 쫓는다 */
+const lure = { x: W/2, y: 300, vx:0, vy:0, ang:0, angV:0, tipX: W/2+118, tipY: 48 };
 let soundOn = true;
 let editMode = false;             // 꾸미기 모드
 let sel = null;                   // 선택한 물건 {type:"furn"|"toy", i}
@@ -928,7 +934,7 @@ function defaultFurn(){
 }
 function defaultToys(){
   return [
-    { t:"ball", x:470, y:TOY_GY, gy:TOY_GY, vx:0, vy:0, rot:0 },
+    { t:"ball", x:470, y:524, gy:524, vx:0, vy:0, rot:0 },
   ];
 }
 function newSave(breedId, name){
@@ -1514,7 +1520,7 @@ function updateCat(dt){
       cat.x = cat.holdX; cat.y = cat.holdY + cat.holdDY;
     }
     // 바닥 가까이에서 천천히 끌면 앞뒤 자리가 따라온다 (들어 올리는 중엔 유지)
-    if(cat.y >= CAT_Y-10 && Math.hypot(cat.vx, cat.vy) < 300) cat.gy = clamp(cat.y, CAT_Y-10, FLOOR_MAX-8);
+    if(cat.y >= CAT_Y-10 && Math.hypot(cat.vx, cat.vy) < 400) cat.gy = clamp(cat.y, CAT_Y-10, FLOOR_MAX-8);
     if(Math.abs(cat.holdX - prevHX) > 0.6) cat.dir = cat.holdX > prevHX ? 1 : -1;
 
     // 빠르게 휘두르면 몸이 쭉 늘어난다
@@ -1578,11 +1584,11 @@ function updateCat(dt){
 
   // --- 낚싯대 모드: 포인터 쫓아가기 ---
   if(playMode && pointer.active && cat.state !== "sleep" && !cat.perched && cat.state !== "jump"){
-    const dx = pointer.x - cat.x;
+    const dx = lure.x - cat.x;                 // 커서가 아니라 실제로 흔들리는 깃털을 쫓는다
     const dist = Math.abs(dx);
     if(dist > 40){
       if(cat.state !== "run"){ cat.state = "run"; cat.stateT = 0; }
-      moveToward(dt, pointer.x, cat.y, { top:lerp(120, 235, clamp(dist/400, 0, 1)),
+      moveToward(dt, lure.x, cat.y, { top:lerp(120, 235, clamp(dist/400, 0, 1)),
                                          acc:600, dec:700, brake:56 });
       cat.vx = Math.cos(cat.hdg)*cat.spd;
       return;
@@ -1770,6 +1776,7 @@ function updateCat(dt){
         if(o){
           o.vx += cat.dir * rand(220, 460);
           o.vy -= rand(120, 300);
+          o.gy = clamp(toyGY(o) + rand(-38, 38), TOY_MIN, TOY_MAX);   // 앞뒤로도 조금 튄다
           o.rotV = (o.rotV || 0) + cat.dir*rand(6,14);
           spawnFx(o.x, o.y-14, "spark"); spawnFx(o.x + rand(-8,8), o.y-22, "spark");
           sfxToyHit();
@@ -5480,23 +5487,183 @@ function drawHeldMarks(t){
   }
 }
 
-/* --------- 낚싯대 --------- */
+/* --------- 낚싯대 ---------
+   진짜 낚싯대 장난감처럼 :
+   막대는 화면 밖(오른쪽 위)에서 들어오고, 낚싯줄은 속도에 따라 늘어졌다 팽팽해지며,
+   깃털은 손보다 한 박자 늦게 끌려와 매달린 채 흔들린다 */
+function resetLure(){
+  lure.x = pointer.x; lure.y = pointer.y;
+  lure.vx = lure.vy = lure.ang = lure.angV = 0;
+  lure.tipX = clamp(pointer.x + 118, 150, W-24); lure.tipY = 48;
+}
+function updateLure(dt){
+  if(!playMode) return;
+  const h = Math.min(dt, 1/50);
+  // 줄에 매달린 깃털 = 스프링 + 감쇠. 손을 조금 늦게 따라오고 멈춰도 잠깐 더 흔들린다
+  lure.vx += ((pointer.x - lure.x)*168 - lure.vx*16) * h;
+  lure.vy += ((pointer.y - lure.y)*168 - lure.vy*16) * h;
+  lure.x  += lure.vx*h;  lure.y += lure.vy*h;
+  // 막대 끝 — 손보다 앞서 나가되 굼뜨게 따라온다
+  const tx = clamp(lure.x + 118, 150, W-24), ty = 44 + Math.sin(elapsed*1.6)*3;
+  const k = 1 - Math.pow(0.02, h);
+  lure.tipX = lerp(lure.tipX, tx, k); lure.tipY = lerp(lure.tipY, ty, k);
+  // 매달린 각도 — 줄이 당기는 방향으로 기울고, 가로 속도만큼 뒤로 젖혀진다
+  const strAng = Math.atan2(lure.x - lure.tipX, lure.y - lure.tipY);
+  const target = strAng*0.34 + clamp(-lure.vx/560, -0.85, 0.85) + Math.sin(elapsed*4.3)*0.045;
+  lure.angV += ((target - lure.ang)*120 - lure.angV*12) * h;
+  lure.ang  += lure.angV*h;
+}
+// 깃털이 바닥에 떨구는 그림자 (고양이·가구보다 먼저 깔린다)
+function drawLureShadow(){
+  if(!playMode || !pointer.active) return;
+  const up = clamp((CAT_Y - lure.y)/380, 0, 1);        // 바닥에서 뜬 정도
+  const rx = 20 + up*24;                               // 높이 뜰수록 넓고 흐려진다
+  shadowEllipse(lure.x + up*22, CAT_Y + 8, rx, rx*0.3, (1-up)*1.05 + 0.12);
+}
+
+/* 깃털 한 장. 아래(+y)로 뻗는 국소 좌표에 그린다 */
+function plumeVane(len, wid, cBase, cMid, cTip, curve, phase){
+  const P = t => {                                     // 깃대(rachis) 곡선
+    const u = 1-t;
+    return [ 2*u*t*(curve*len*0.35) + t*t*(curve*len),
+             2*u*t*(len*0.52)       + t*t*len ];
+  };
+  const N = t => {                                     // 깃대에 수직인 방향
+    const a = P(Math.max(0, t-0.03)), b = P(Math.min(1, t+0.03));
+    const dx = b[0]-a[0], dy = b[1]-a[1], d = Math.hypot(dx,dy) || 1;
+    return [-dy/d, dx/d];
+  };
+  // 뿌리는 가늘고 중간이 가장 넓다. 바람에 판이 살짝 물결친다
+  const wAt = t => wid * Math.pow(Math.sin(Math.PI*clamp(t*0.94+0.05, 0, 1)), 0.75)
+                       * (1 + 0.09*Math.sin(t*8 + phase));
+  const SEG = 14, L = 1, R = 0.72;                     // 좌우가 다른 실제 깃털 비율
+  const edge = (side, from, to) => {
+    const step = from <= to ? 1 : -1;
+    for(let i=from; step > 0 ? i <= to : i >= to; i += step){
+      const t = i/SEG, p = P(t), n = N(t), w = wAt(t)*side;
+      const x = p[0] + n[0]*w, y = p[1] + n[1]*w;
+      (i === 0 && step > 0) ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+  };
+  const tip = P(1);
+  const vane = () => { ctx.beginPath(); edge(-L, 0, SEG); edge(R, SEG, 0); ctx.closePath(); };
+  // 뿌리에서 끝으로 갈수록 밝아지는 깃털 판
+  const g = ctx.createLinearGradient(0, 0, tip[0], tip[1]);
+  g.addColorStop(0, cBase); g.addColorStop(0.45, cMid); g.addColorStop(1, cTip);
+  ctx.fillStyle = g; vane(); ctx.fill();
+  // 깃대를 경계로 한쪽은 빛을, 반대쪽은 그늘을 받는다
+  const mp = P(0.5), mn = N(0.5), mw = wAt(0.5);
+  const sg = ctx.createLinearGradient(mp[0]-mn[0]*mw, mp[1]-mn[1]*mw, mp[0]+mn[0]*mw, mp[1]+mn[1]*mw);
+  sg.addColorStop(0,    "rgba(255,250,238,.34)");
+  sg.addColorStop(0.42, "rgba(255,250,238,0)");
+  sg.addColorStop(0.58, "rgba(46,36,24,.10)");
+  sg.addColorStop(1,    "rgba(46,36,24,.34)");
+  ctx.fillStyle = sg; vane(); ctx.fill();
+  // 깃가지(barb) — 깃대에서 끝쪽으로 비스듬히 뻗는다
+  ctx.lineWidth = 0.62;
+  for(let i=1; i<SEG; i++){
+    const t = i/SEG, p = P(t), n = N(t), w = wAt(t);
+    const fw = P(Math.min(1, t+0.12));
+    const bx = (fw[0]-p[0])*0.55, by = (fw[1]-p[1])*0.55;   // 끝 방향으로 눕히기
+    ctx.strokeStyle = "rgba(255,250,236,.30)";
+    ctx.beginPath();
+    ctx.moveTo(p[0], p[1]); ctx.lineTo(p[0] - n[0]*w*0.94 + bx, p[1] - n[1]*w*0.94 + by);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(52,40,26,.40)";
+    ctx.beginPath();
+    ctx.moveTo(p[0], p[1]); ctx.lineTo(p[0] + n[0]*w*R*0.94 + bx, p[1] + n[1]*w*R*0.94 + by);
+    ctx.stroke();
+  }
+  // 야생 깃털의 가로 얼룩무늬
+  ctx.save(); vane(); ctx.clip();
+  ctx.strokeStyle = "rgba(64,50,34,.20)"; ctx.lineWidth = 2.4;
+  for(let i=1; i<=3; i++){
+    const t = 0.28 + i*0.19, p = P(t), n = N(t), w = wAt(t)*1.4;
+    ctx.beginPath();
+    ctx.moveTo(p[0] - n[0]*w, p[1] - n[1]*w); ctx.lineTo(p[0] + n[0]*w, p[1] + n[1]*w);
+    ctx.stroke();
+  }
+  ctx.restore();
+  // 판 가장자리 — 배경과 분리되도록 아주 옅게
+  ctx.strokeStyle = "rgba(58,45,30,.28)"; ctx.lineWidth = 0.6;
+  vane(); ctx.stroke();
+  // 끝에서 갈라진 몇 가닥
+  ctx.strokeStyle = "rgba(240,234,220,.45)"; ctx.lineWidth = 0.7;
+  for(let i=-1; i<=1; i++){
+    const p = P(0.9), n = N(0.9);
+    ctx.beginPath(); ctx.moveTo(p[0], p[1]);
+    ctx.lineTo(tip[0] + n[0]*i*2.6 + i*1.2, tip[1] + 3.5 + Math.abs(i)*1.5);
+    ctx.stroke();
+  }
+  // 깃대
+  ctx.strokeStyle = "rgba(252,248,238,.75)"; ctx.lineWidth = 1.1;
+  ctx.beginPath(); ctx.moveTo(0,0);
+  ctx.quadraticCurveTo(curve*len*0.35, len*0.52, tip[0], tip[1]); ctx.stroke();
+  ctx.strokeStyle = "rgba(70,56,40,.35)"; ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(0.6, 0);
+  ctx.quadraticCurveTo(curve*len*0.35+0.6, len*0.52, tip[0]+0.6, tip[1]); ctx.stroke();
+}
+
 function drawFeather(){
   if(!playMode) return;
-  const x = pointer.x, y = pointer.y;
+  const x = lure.x, y = lure.y, tx = lure.tipX, ty = lure.tipY;
+  const sc = lerp(0.80, 1.06, clamp((y - 90)/(FLOOR_Y - 90), 0, 1));   // 멀수록(위) 작게
+  const spd = Math.hypot(lure.vx, lure.vy);
+
   ctx.save();
-  // 줄
-  ctx.strokeStyle="rgba(90,70,50,.55)"; ctx.lineWidth=1.5;
-  ctx.beginPath(); ctx.moveTo(x+40, 0); ctx.quadraticCurveTo(x+20, y*0.5, x, y-14); ctx.stroke();
-  // 깃털
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+
+  // --- 막대 : 화면 밖에서 들어오는 가느다란 검은 대 ---
+  const hx = W + 120, hy = -90;                       // 손잡이(화면 밖)
+  const ang = Math.atan2(ty - hy, tx - hx);
+  const nx = -Math.sin(ang), ny = Math.cos(ang);
+  const rod = (w0, w1, style) => {
+    ctx.beginPath();
+    ctx.moveTo(hx + nx*w0, hy + ny*w0); ctx.lineTo(tx + nx*w1, ty + ny*w1);
+    ctx.lineTo(tx - nx*w1, ty - ny*w1); ctx.lineTo(hx - nx*w0, hy - ny*w0);
+    ctx.closePath(); ctx.fillStyle = style; ctx.fill();
+  };
+  ctx.globalAlpha = 0.30;                             // 대의 그림자
+  rod(6.5, 2.6, "rgba(30,22,14,.9)");
+  ctx.globalAlpha = 1;
+  const rg = ctx.createLinearGradient(hx, hy, tx, ty);
+  rg.addColorStop(0, "#3a332c"); rg.addColorStop(0.5, "#22201e"); rg.addColorStop(1, "#4a453e");
+  rod(5.2, 1.7, rg);
+  ctx.strokeStyle = "rgba(255,248,235,.28)"; ctx.lineWidth = 0.9;   // 대 위쪽 하이라이트
+  ctx.beginPath();
+  ctx.moveTo(hx + nx*3.2, hy + ny*3.2); ctx.lineTo(tx + nx*0.9, ty + ny*0.9); ctx.stroke();
+
+  // --- 낚싯줄 : 천천히 움직이면 늘어지고, 휙 채면 팽팽해진다 ---
+  const sag = clamp(34 - spd/26, 3, 34);
+  const mx = (tx + x)/2, my = (ty + y)/2 + sag;
+  const line = (w, style) => {
+    ctx.strokeStyle = style; ctx.lineWidth = w;
+    ctx.beginPath(); ctx.moveTo(tx, ty);
+    ctx.quadraticCurveTo(mx, my, x, y - 3*sc); ctx.stroke();
+  };
+  line(1.6, "rgba(35,28,20,.28)");                    // 줄 그림자
+  line(0.9, "rgba(240,236,228,.55)");                 // 빛 받는 면
+
+  // --- 깃털 뭉치 ---
   ctx.translate(x, y);
-  ctx.rotate(Math.sin(elapsed*7)*0.25);
-  ctx.fillStyle="#e05a7a";
-  ctx.beginPath(); ctx.ellipse(0, 0, 7, 17, 0, 0, 6.283); ctx.fill();
-  ctx.fillStyle="#ffb3c4";
-  ctx.beginPath(); ctx.ellipse(-2, 2, 3.6, 12, 0, 0, 6.283); ctx.fill();
-  ctx.strokeStyle="#8c3a52"; ctx.lineWidth=2;
-  ctx.beginPath(); ctx.moveTo(0,-16); ctx.lineTo(0,17); ctx.stroke();
+  ctx.rotate(lure.ang);
+  ctx.scale(sc, sc);
+  // 줄을 묶은 매듭과 회전 고리
+  ctx.fillStyle = "#9a9490";
+  ctx.beginPath(); ctx.ellipse(0, -3.5, 1.9, 3.2, 0, 0, 6.283); ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,.45)";
+  ctx.beginPath(); ctx.ellipse(-0.6, -4.4, 0.7, 1.4, 0, 0, 6.283); ctx.fill();
+
+  const fl = Math.sin(elapsed*9)*0.10 + lure.angV*0.02;   // 판이 팔랑이는 정도
+  ctx.save(); ctx.rotate(-0.52 - fl);     plumeVane(33, 6.0, "#4a3f31", "#8a7a61", "#c3b393", -0.20, 1.1); ctx.restore();
+  ctx.save(); ctx.rotate( 0.44 + fl);     plumeVane(29, 5.6, "#554836", "#9a8a6d", "#d2c3a4",  0.24, 2.7); ctx.restore();
+  ctx.save(); ctx.rotate(-0.04 + fl*0.4); plumeVane(38, 6.6, "#3f362a", "#7d6f57", "#e2d6bb",  0.06, 0.3); ctx.restore();
+  // 묶인 뿌리를 감춘 실
+  ctx.fillStyle = "#7d6a4e";
+  ctx.beginPath(); ctx.ellipse(0, 1.2, 3.2, 2.4, 0, 0, 6.283); ctx.fill();
+  ctx.strokeStyle = "rgba(50,38,24,.5)"; ctx.lineWidth = 0.7;
+  ctx.beginPath(); ctx.moveTo(-3, 0.4); ctx.lineTo(3, 0.9);
+  ctx.moveTo(-3, 2.2); ctx.lineTo(3, 2.6); ctx.stroke();
   ctx.restore();
 }
 
@@ -5638,6 +5805,7 @@ function render(t){
   for(const f of S.furn) if(FURN[f.t] && FURN[f.t].kind === "wall") drawFurn(f);
   for(const f of S.furn) if(FURN[f.t] && FURN[f.t].kind === "floor" && FURN[f.t].deco) drawFurn(f);
   drawSunPatch();            // 바닥·러그에 깔리는 햇빛 (가구·고양이보다는 아래)
+  drawLureShadow();          // 깃털 그림자는 바닥에 깔린다 (고양이·가구가 그 위를 지나가도록)
 
   const list = [];
   for(const f of S.furn){
@@ -5654,9 +5822,9 @@ function render(t){
   }
 
   drawFx();
+  drawFeather();             // 방 조명(창빛·밤)을 같이 받도록 분위기 레이어보다 먼저
   drawRoomMood(elapsed);     // 창빛 · 비네팅
   drawNight();
-  drawFeather();
   if(editMode) drawEditOverlay();
 }
 
@@ -5669,6 +5837,7 @@ function loop(ts){
 
   if(S){
     updateStats(dt);
+    updateLure(dt);            // 깃털이 먼저 움직이고, 고양이가 그걸 쫓는다
     updateCat(dt);
     updateRig(dt, elapsed);    // 사진 관절 리그
     updateToys(dt);
@@ -5754,6 +5923,7 @@ function doAction(act){
       hint(playMode ? "마우스(손가락)를 움직여 고양이와 놀아주세요! 다시 누르면 종료"
                     : "고양이를 톡 누르면 쓰다듬기, 꾹 눌러 끌면 번쩍 들어 던질 수 있어요.");
       if(playMode){
+        resetLure();                    // 이전 위치에서 날아오지 않도록 손 위치에서 시작
         if(cat.state === "sleep"){ setState("sit",2); say("...냥?",1.4); }
         toast("낚싯대 놀이 시작!");
       }else setState("sit", 2);
@@ -6036,7 +6206,7 @@ stage.addEventListener("pointermove", e=>{
     o.x = clamp(p.x - drag.dx, X_MIN-8, X_MAX+8);
     o.y = clamp(p.y - drag.dy, 60, TOY_MAX);
     // 바닥 가까이에서 천천히 끌면 그 자리로 옮겨진다 (휙 들어 올릴 때는 유지)
-    if(o.y > TOY_MIN && Math.hypot(o.vx||0, o.vy||0) < 300) o.gy = clamp(o.y, TOY_MIN, TOY_MAX);
+    if(o.y > TOY_MIN && Math.hypot(o.vx||0, o.vy||0) < 400) o.gy = clamp(o.y, TOY_MIN, TOY_MAX);
     return;
   }
   if(!editMode || !sel) return;
