@@ -1,0 +1,10 @@
+# 편집 중 생긴 백업 · 임시 파일
+*.bak
+_shot*.html
+_bench*.html
+
+# OS / 에디터
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
